@@ -11,6 +11,7 @@ import profileRouter from "./routes/profile.js";
 import calendarRouter from "./routes/calendar.js";
 import tasksRouter from "./routes/tasks.js";
 import professorRouter from "./routes/professor.js";
+import esp32DeviceRouter from "./routes/esp32Device.js";
 
 export function createApp() {
   const app = express();
@@ -20,6 +21,9 @@ export function createApp() {
       credentials: true,
     })
   );
+
+  app.use("/api/device/esp32", esp32DeviceRouter);
+
   app.use(express.json());
 
   app.get("/api/health", (_req, res) => {

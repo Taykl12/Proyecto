@@ -10,6 +10,7 @@ import AdminCursosPage from "./pages/admin/AdminCursosPage";
 import AdminDashboardPage from "./pages/admin/AdminDashboardPage";
 import AdminMateriasPage from "./pages/admin/AdminMateriasPage";
 import AdminProyectosPage from "./pages/admin/AdminProyectosPage";
+import AdminEsp32Page from "./pages/admin/AdminEsp32Page";
 import AdminUsersPage from "./pages/admin/AdminUsersPage";
 import ProfessorAttendanceCoursePage from "./pages/professor/ProfessorAttendanceCoursePage";
 import ProfessorAttendancePage from "./pages/professor/ProfessorAttendancePage";
@@ -69,6 +70,14 @@ function App() {
             element={
               <AdminRoute>
                 <AdminProyectosPage />
+              </AdminRoute>
+            }
+          />
+          <Route
+            path={ROUTES.ADMIN_ESP32}
+            element={
+              <AdminRoute>
+                <AdminEsp32Page />
               </AdminRoute>
             }
           />

@@ -17,6 +17,15 @@ Se añadió una aplicación **React + TypeScript + Vite** con **CSS vanilla** (s
 - **Migración 015:** columnas `bloqueo_*`, tabla `proyecto_profesor_asignado`, RLS `can_manage_proyecto`.
 - **API:** `/api/admin/proyectos` + permisos ampliados en `PUT /api/projects/:id`.
 
+### Monitor ESP32-C3 (junio 2026)
+
+- **Admin:** pestaña `/admin/esp32` con indicador verde/rojo de conexión y contador de pulsaciones del botón BOOT.
+- **API dispositivo:** `POST /api/device/esp32/heartbeat` y `POST /api/device/esp32/button` (header `X-Device-Token`).
+- **API admin:** `GET /api/admin/esp32/status`, `POST /api/admin/esp32/reset`.
+- **Estado en memoria** (se pierde al reiniciar el servidor).
+- **Env:** `ESP32_DEVICE_TOKEN` en `server/.env` (default dev: `dev-esp32-token`).
+- **Firmware de referencia:** `firmware/esp32-c3-supermini/esp32-c3-supermini.ino`.
+
 ---
 
 ## Stack y dependencias nuevas

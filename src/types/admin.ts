@@ -42,6 +42,12 @@ export interface AdminSummary {
   subjects: number;
 }
 
+export interface Esp32Status {
+  connected: boolean;
+  pressCount: number;
+  lastSeenAt: string | null;
+}
+
 export interface ProjectLocks {
   scope: boolean;
   documentation: boolean;

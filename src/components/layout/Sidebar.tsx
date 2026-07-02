@@ -3,6 +3,7 @@ import {
   BookOpen,
   CalendarClock,
   ClipboardCheck,
+  Cpu,
   GraduationCap,
   Home,
   Layers,
@@ -60,6 +61,12 @@ const ADMIN_NAV: NavItem[] = [
     label: "Proyectos",
     icon: <Layers size={22} aria-hidden />,
     to: ROUTES.ADMIN_PROJECTS,
+  },
+  {
+    id: "admin-esp32",
+    label: "ESP32",
+    icon: <Cpu size={22} aria-hidden />,
+    to: ROUTES.ADMIN_ESP32,
   },
 ];
 

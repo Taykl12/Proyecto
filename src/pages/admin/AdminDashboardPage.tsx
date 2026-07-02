@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BookOpen, GraduationCap, Layers, Shield, Users } from "lucide-react";
+import { BookOpen, Cpu, GraduationCap, Layers, Shield, Users } from "lucide-react";
 import { Link } from "react-router-dom";
 import { DashboardLayout } from "../../components/layout/DashboardLayout";
 import { apiFetchWithRetry } from "../../lib/api";
@@ -31,6 +31,12 @@ const QUICK_LINKS = [
     description: "Ver, editar, asignar profesores y bloquear secciones.",
     to: ROUTES.ADMIN_PROJECTS,
     icon: <Layers size={24} aria-hidden />,
+  },
+  {
+    label: "Monitor ESP32",
+    description: "Estado de conexión y contador del botón BOOT del ESP32-C3.",
+    to: ROUTES.ADMIN_ESP32,
+    icon: <Cpu size={24} aria-hidden />,
   },
 ] as const;
 

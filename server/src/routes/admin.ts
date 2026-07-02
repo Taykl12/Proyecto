@@ -7,6 +7,7 @@ import {
   validateHorario,
   validateSuperiorSpecialty,
 } from "../lib/adminAcademic.js";
+import { getEsp32Status, resetPressCount } from "../lib/esp32State.js";
 import { requireAdmin } from "../middleware/admin.js";
 import { requireAuth, type AuthedRequest } from "../middleware/auth.js";
 
@@ -941,6 +942,15 @@ router.put("/materias/:id/profesores", async (req, res) => {
   } catch (e) {
     res.status(statusFromError(e)).json({ error: messageFromError(e) });
   }
+});
+
+router.get("/esp32/status", (_req, res) => {
+  res.json(getEsp32Status());
+});
+
+router.post("/esp32/reset", (_req, res) => {
+  resetPressCount();
+  res.json(getEsp32Status());
 });
 
 export default router;
