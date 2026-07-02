@@ -1,0 +1,17 @@
+{
+  "folders": [
+    {
+      "name": "Classify Web",
+      "path": "."
+    },
+    {
+      "name": "ESP32 Firmware",
+      "path": "esp32"
+    }
+  ],
+  "settings": {
+    "files.exclude": {
+      "**/.pio": true
+    }
+  }
+}
