@@ -24,7 +24,16 @@ Se añadió una aplicación **React + TypeScript + Vite** con **CSS vanilla** (s
 - **API admin:** `GET /api/admin/esp32/status`, `POST /api/admin/esp32/reset`.
 - **Estado en memoria** (se pierde al reiniciar el servidor).
 - **Env:** `ESP32_DEVICE_TOKEN` en `server/.env` (default dev: `dev-esp32-token`).
-- **Firmware de referencia:** `firmware/esp32-c3-supermini/esp32-c3-supermini.ino`.
+- **Firmware de referencia:** `firmware/esp32-c3-supermini/esp32-c3-supermini.ino` y `esp32/` (PlatformIO).
+
+### Asignación de huella (ESP32 + AS608) (julio 2026)
+
+- **BD:** migración `016_usuarios_huella_id.sql` — columna `usuarios.huella_id` (INT UNIQUE, 0–199).
+- **Admin:** botón **Asignar Huella** / **Reasignar Huella** / **Quitar Huella** en `/admin/usuarios`; modal interactivo con pasos del sensor.
+- **API admin:** `POST /api/admin/users/:id/huella/iniciar`, `GET .../estado`, `POST .../cancelar`, `DELETE .../huella`.
+- **API dispositivo:** `GET /api/device/esp32/huella/pendiente`, `POST .../progreso`, `POST .../resultado`.
+- **Estado de sesión en memoria** (`fingerprintState.ts`); un solo enrolamiento activo a la vez.
+- **Firmware:** `esp32/src/main.cpp` — heartbeat + AS608 (UART GPIO20/21) con Adafruit Fingerprint Library + ArduinoJson.
 
 ---
 

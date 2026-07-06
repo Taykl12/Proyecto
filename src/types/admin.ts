@@ -14,7 +14,25 @@ export interface AdminUser {
   roleId: number | null;
   roleLabel: string;
   profilePhotoUrl: string | null;
+  huellaId: number | null;
   createdAt: string;
+}
+
+export type FingerprintStep =
+  | "requested"
+  | "claimed"
+  | "place_finger"
+  | "remove_finger"
+  | "place_again"
+  | "processing"
+  | "success"
+  | "error";
+
+export interface FingerprintStatus {
+  active: boolean;
+  step: FingerprintStep | null;
+  slotId: number | null;
+  errorMessage: string | null;
 }
 
 export interface AdminCourse {

@@ -441,6 +441,7 @@ Esta sección documenta el **estado real** de la base desplegada para la aplicac
 |-----------------|-------------------|
 | Login, perfil | `auth.users`, `usuarios`, `roles` |
 | `/proyectos` | `grupos_proyectos`, `proyecto_profesor`, `grupo_estudiante` |
+| Admin usuarios + huella | `usuarios` (`huella_id`), sesión en memoria en API + ESP32 |
 | Configuración proyecto | `grupos_proyectos` (columnas de alcance, links, `documentos` JSONB) |
 | Carrusel inicio | `grupos_proyectos` (`es_favorito = true`) + conteo en `tareas_grupo` |
 | Pendientes | `tareas_grupo` + join `grupos_proyectos` |
@@ -461,6 +462,7 @@ Esta sección documenta el **estado real** de la base desplegada para la aplicac
 | 007 | `007_project_config_columns.sql` | `alcance_detalle`, `notas_alcance`, `anteproyecto_validado`, `link_respaldo`, `link_calificaciones`, `documentos`; RPC `get_project_owner_email`. |
 | 008 | `008_profile_avatars_storage.sql` | Bucket Storage `avatars` (público, 2 MB, jpeg/png/webp) + políticas CRUD en carpeta `{user_id}/`. |
 | 009 | `009_search_usuarios_dni.sql` | RPC `search_usuarios_for_invite` ampliada: devuelve `dni` y busca por DNI, email, nombre o apellido. |
+| 016 | `016_usuarios_huella_id.sql` | Columna `usuarios.huella_id` (INT, UNIQUE, 0–199) para vincular slot del sensor AS608. |
 
 **Migraciones adicionales vía Supabase MCP** (mismo proyecto, sin archivo local separado):
 
@@ -538,3 +540,17 @@ Se reemplaza la tabla `Documentacion_Aprobacion` para el flujo actual de la app 
 | 2026 | Configuración proyecto: alcance, notas, aprobación, links, documentos JSONB. |
 | 2026 | Storage `avatars` para foto de perfil (`/preferencias`). |
 | 2026 | Búsqueda de integrantes por DNI en `search_usuarios_for_invite`. |
+| 2026 | Columna `usuarios.huella_id` + flujo de asignación de huella (admin + ESP32 + AS608). |
+
+### 6.8 Flujo de asignación de huella (app web + ESP32)
+
+1. Admin abre **Asignar Huella** en `/admin/usuarios` para un usuario.
+2. API crea sesión en memoria (`POST /api/admin/users/:id/huella/iniciar`) con un slot libre (0–199) o reutiliza el existente.
+3. ESP32 consulta `GET /api/device/esp32/huella/pendiente` y ejecuta enrolamiento físico (Adafruit + AS608).
+4. ESP32 reporta progreso (`POST .../huella/progreso`) y resultado (`POST .../huella/resultado`).
+5. API persiste `usuarios.huella_id = slotId` al confirmar éxito.
+6. Admin ve el estado en tiempo real vía polling (`GET .../huella/estado`).
+
+Endpoints admin: `POST iniciar`, `GET estado`, `POST cancelar`, `DELETE huella` (elimina del sensor y limpia BD).
+
+Endpoints dispositivo: `GET huella/pendiente`, `POST huella/progreso`, `POST huella/resultado` (header `X-Device-Token`).

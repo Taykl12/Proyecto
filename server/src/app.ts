@@ -12,6 +12,7 @@ import calendarRouter from "./routes/calendar.js";
 import tasksRouter from "./routes/tasks.js";
 import professorRouter from "./routes/professor.js";
 import esp32DeviceRouter from "./routes/esp32Device.js";
+import adminFingerprintRouter from "./routes/adminFingerprint.js";
 
 export function createApp() {
   const app = express();
@@ -32,6 +33,7 @@ export function createApp() {
 
   app.use("/api/auth", authRouter);
   app.use("/api/admin", adminRouter);
+  app.use("/api/admin/users", adminFingerprintRouter);
   app.use("/api/admin/proyectos", adminProjectsRouter);
   app.use("/api/projects", projectsRouter);
   app.use("/api/dashboard", dashboardRouter);

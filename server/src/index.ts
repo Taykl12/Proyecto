@@ -2,6 +2,8 @@
 import os from "node:os";
 import { createApp } from "./app.js";
 import { config } from "./config.js";
+import { createAdminClient } from "./lib/supabase.js";
+import { setDeleteTimeoutCleanup } from "./lib/fingerprintState.js";
 
 function logNetworkAddresses(port: number): void {
   const urls: string[] = [`http://127.0.0.1:${port}`];
@@ -21,6 +23,18 @@ function logNetworkAddresses(port: number): void {
   }
   console.log("ESP32: usá la IP de tu PC en la red WiFi (no 127.0.0.1).");
 }
+
+setDeleteTimeoutCleanup(async (userId) => {
+  const supabase = createAdminClient();
+  const { error } = await supabase
+    .from("usuarios")
+    .update({ huella_id: null })
+    .eq("id_usuario", userId);
+  if (error) throw new Error(error.message);
+  console.warn(
+    `[fingerprint] huella_id limpiado en BD tras timeout delete (user=${userId})`
+  );
+});
 
 const app = createApp();
 const server = createServer(app);

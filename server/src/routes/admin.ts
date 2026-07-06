@@ -30,6 +30,7 @@ interface UserProfileRow {
   telefono: string | null;
   foto_perfil: string | null;
   id_rol: number;
+  huella_id: number | null;
   fecha_registro: string | null;
   roles?: { nombre_rol: string } | { nombre_rol: string }[] | null;
 }
@@ -44,6 +45,7 @@ interface AdminUserDto {
   roleId: number | null;
   roleLabel: string;
   profilePhotoUrl: string | null;
+  huellaId: number | null;
   createdAt: string;
 }
 
@@ -198,6 +200,7 @@ function mapUser(
     roleId: profile?.id_rol ?? null,
     roleLabel: roleLabel(roleName),
     profilePhotoUrl: profile?.foto_perfil ?? null,
+    huellaId: profile?.huella_id ?? null,
     createdAt: profile?.fecha_registro ?? authUser?.created_at ?? "",
   };
 }
@@ -261,7 +264,7 @@ async function listUserProfiles(supabase: SupabaseClient): Promise<UserProfileRo
   const { data, error } = await supabase
     .from("usuarios")
     .select(
-      "id_usuario, dni, nombre, apellido, telefono, foto_perfil, id_rol, fecha_registro, roles(nombre_rol)"
+      "id_usuario, dni, nombre, apellido, telefono, foto_perfil, id_rol, huella_id, fecha_registro, roles(nombre_rol)"
     )
     .order("fecha_registro", { ascending: false });
   if (error) throw new Error(error.message);
@@ -293,7 +296,7 @@ async function getAdminUser(
     supabase
       .from("usuarios")
       .select(
-        "id_usuario, dni, nombre, apellido, telefono, foto_perfil, id_rol, fecha_registro, roles(nombre_rol)"
+        "id_usuario, dni, nombre, apellido, telefono, foto_perfil, id_rol, huella_id, fecha_registro, roles(nombre_rol)"
       )
       .eq("id_usuario", userId)
       .maybeSingle(),

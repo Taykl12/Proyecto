@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
-import { Search, Users } from "lucide-react";
+import { Fingerprint, Search, Users } from "lucide-react";
 import { AdminModal } from "../../components/admin/AdminModal";
+import { FingerprintEnrollModal } from "../../components/admin/FingerprintEnrollModal";
 import { DashboardLayout } from "../../components/layout/DashboardLayout";
 import { useAuth } from "../../contexts/AuthContext";
 import { ApiError, apiFetch, apiFetchWithRetry } from "../../lib/api";
-import type { AdminRole, AdminUser, AdminUsersResponse } from "../../types/admin";
+import type { AdminRole, AdminUser, AdminUsersResponse, FingerprintStatus } from "../../types/admin";
 import "../../styles/admin.css";
 
 interface UserFormState {
@@ -163,6 +164,8 @@ export default function AdminUsersPage() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
   const [form, setForm] = useState<UserFormState>(EMPTY_USER_FORM);
+  const [fingerprintUser, setFingerprintUser] = useState<AdminUser | null>(null);
+  const [removingFingerprint, setRemovingFingerprint] = useState<string | null>(null);
 
   const visibleUsers = useMemo(() => filterUsers(users, query), [users, query]);
 
@@ -258,6 +261,62 @@ export default function AdminUsersPage() {
     }
   }
 
+  function openFingerprint(item: AdminUser) {
+    setFingerprintUser(item);
+  }
+
+  function closeFingerprint() {
+    setFingerprintUser(null);
+  }
+
+  async function pollDeleteStatus(userId: string): Promise<FingerprintStatus> {
+    const deadline = Date.now() + 90_000;
+    while (Date.now() < deadline) {
+      const status = await apiFetchWithRetry<FingerprintStatus>(
+        `/api/admin/users/${userId}/huella/estado`
+      );
+      if (status.step === "success" || status.step === "error") {
+        return status;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 1500));
+    }
+    return {
+      active: false,
+      step: "error",
+      slotId: null,
+      errorMessage: "Tiempo agotado al quitar la huella del sensor",
+    };
+  }
+
+  async function handleRemoveFingerprint(item: AdminUser) {
+    if (
+      !window.confirm(
+        `¿Quitar la huella asignada a ${fullName(item)}? El ESP32 debe estar conectado.`
+      )
+    ) {
+      return;
+    }
+
+    setRemovingFingerprint(item.id);
+    setError(null);
+    try {
+      await apiFetch(`/api/admin/users/${item.id}/huella`, { method: "DELETE" });
+      const result = await pollDeleteStatus(item.id);
+      if (result.step === "error") {
+        throw new ApiError(
+          result.errorMessage ?? "No se pudo quitar la huella del sensor",
+          500
+        );
+      }
+      await loadUsers();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "No se pudo quitar la huella");
+      await loadUsers();
+    } finally {
+      setRemovingFingerprint(null);
+    }
+  }
+
   return (
     <DashboardLayout>
       <header className="admin-hero">
@@ -312,6 +371,7 @@ export default function AdminUsersPage() {
                   <th scope="col">DNI</th>
                   <th scope="col">Celular</th>
                   <th scope="col">Rol</th>
+                  <th scope="col">Huella</th>
                   <th scope="col">Acciones</th>
                 </tr>
               </thead>
@@ -333,7 +393,37 @@ export default function AdminUsersPage() {
                         {item.roleLabel}
                       </span>
                     </td>
+                    <td className="projects-table__cell" data-label="Huella">
+                      {item.huellaId !== null ? (
+                        <span className="admin-table__fingerprint admin-table__fingerprint--assigned">
+                          <Fingerprint size={16} aria-hidden />
+                          Slot #{item.huellaId}
+                        </span>
+                      ) : (
+                        <span className="admin-table__fingerprint admin-table__fingerprint--empty">
+                          Sin asignar
+                        </span>
+                      )}
+                    </td>
                     <td className="projects-table__cell projects-table__cell--actions" data-label="Acciones">
+                      <button
+                        type="button"
+                        className="projects-table__action"
+                        onClick={() => openFingerprint(item)}
+                        disabled={removingFingerprint === item.id}
+                      >
+                        {item.huellaId !== null ? "Reasignar Huella" : "Asignar Huella"}
+                      </button>
+                      {item.huellaId !== null ? (
+                        <button
+                          type="button"
+                          className="projects-table__action admin-table__danger"
+                          onClick={() => void handleRemoveFingerprint(item)}
+                          disabled={removingFingerprint === item.id}
+                        >
+                          {removingFingerprint === item.id ? "Quitando…" : "Quitar Huella"}
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         className="projects-table__action"
@@ -392,6 +482,13 @@ export default function AdminUsersPage() {
           onSubmit={handleSubmit}
         />
       </AdminModal>
+
+      <FingerprintEnrollModal
+        user={fingerprintUser}
+        open={fingerprintUser !== null}
+        onClose={closeFingerprint}
+        onSuccess={() => void loadUsers()}
+      />
     </DashboardLayout>
   );
 }

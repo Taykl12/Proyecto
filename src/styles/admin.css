@@ -861,3 +861,94 @@
   font-size: 0.875rem;
   color: var(--color-ink-muted);
 }
+
+.fingerprint-modal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.fingerprint-modal__user {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-muted);
+}
+
+.fingerprint-modal__name {
+  margin: 0;
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
+.fingerprint-modal__slot {
+  margin: var(--space-xs) 0 0;
+  font-size: 0.875rem;
+  color: var(--color-ink-muted);
+}
+
+.fingerprint-modal__step {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  text-align: center;
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
+.fingerprint-modal__spinner {
+  animation: fingerprint-spin 1s linear infinite;
+}
+
+.fingerprint-modal__icon {
+  color: var(--color-accent);
+}
+
+.fingerprint-modal__icon--success {
+  color: var(--color-success-text);
+}
+
+.fingerprint-modal__steps {
+  margin: 0;
+  padding-left: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  color: var(--color-ink-muted);
+  font-size: 0.9375rem;
+}
+
+.fingerprint-modal__steps li.is-active {
+  color: var(--color-ink);
+  font-weight: 600;
+}
+
+.admin-table__fingerprint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 0.875rem;
+}
+
+.admin-table__fingerprint--assigned {
+  color: var(--color-success-text);
+  font-weight: 600;
+}
+
+.admin-table__fingerprint--empty {
+  color: var(--color-ink-muted);
+}
+
+@keyframes fingerprint-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
