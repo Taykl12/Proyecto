@@ -1,3 +1,5 @@
+import { hasActiveDeviceJob } from "./deviceJobState.js";
+
 export type FingerprintStep =
   | "requested"
   | "claimed"
@@ -118,6 +120,15 @@ export function startSession(
 ): FingerprintSession {
   expireIfNeeded();
 
+  if (hasActiveDeviceJob()) {
+    throw Object.assign(
+      new Error(
+        "Hay una operación global en el sensor (vaciar/restaurar). Esperá a que termine."
+      ),
+      { status: 409 }
+    );
+  }
+
   if (
     activeSession &&
     activeSession.step !== "success" &&
@@ -144,10 +155,22 @@ export function startSession(
   return session;
 }
 
+export function hasActiveUserFingerprintSession(): boolean {
+  expireIfNeeded();
+  if (!activeSession) return false;
+  return (
+    activeSession.step !== "success" && activeSession.step !== "error"
+  );
+}
+
 export function claimPending():
   | (FingerprintSession & { pending: true })
   | { pending: false } {
   expireIfNeeded();
+
+  if (hasActiveDeviceJob()) {
+    return { pending: false };
+  }
 
   if (!activeSession || activeSession.step !== "requested") {
     return { pending: false };

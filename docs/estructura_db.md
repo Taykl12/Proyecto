@@ -441,7 +441,7 @@ Esta sección documenta el **estado real** de la base desplegada para la aplicac
 |-----------------|-------------------|
 | Login, perfil | `auth.users`, `usuarios`, `roles` |
 | `/proyectos` | `grupos_proyectos`, `proyecto_profesor`, `grupo_estudiante` |
-| Admin usuarios + huella | `usuarios` (`huella_id`), sesión en memoria en API + ESP32 |
+| Admin usuarios + huella | `usuarios` (`huella_id`), `huellas` (templates base64), sesión en memoria en API + ESP32 |
 | Configuración proyecto | `grupos_proyectos` (columnas de alcance, links, `documentos` JSONB) |
 | Carrusel inicio | `grupos_proyectos` (`es_favorito = true`) + conteo en `tareas_grupo` |
 | Pendientes | `tareas_grupo` + join `grupos_proyectos` |
@@ -463,6 +463,24 @@ Esta sección documenta el **estado real** de la base desplegada para la aplicac
 | 008 | `008_profile_avatars_storage.sql` | Bucket Storage `avatars` (público, 2 MB, jpeg/png/webp) + políticas CRUD en carpeta `{user_id}/`. |
 | 009 | `009_search_usuarios_dni.sql` | RPC `search_usuarios_for_invite` ampliada: devuelve `dni` y busca por DNI, email, nombre o apellido. |
 | 016 | `016_usuarios_huella_id.sql` | Columna `usuarios.huella_id` (INT, UNIQUE, 0–199) para vincular slot del sensor AS608. |
+| 018 | `018_huellas_table.sql` | Tabla `huellas`: respaldo durable del template AS608 (base64) por `id_usuario`. |
+
+### Tabla 19: `huellas` (respaldo de templates biométricos)
+
+**Propósito:** almacenar el template crudo del sensor AS608 (codificado en base64) para poder restaurar la memoria física del dispositivo sin volver a enrolar a cada alumno.
+
+| Campo | Tipo / restricciones | Descripción |
+|-------|----------------------|-------------|
+| `id_huella` | UUID, PK | Identificador del respaldo. |
+| `id_usuario` | UUID, FK → `usuarios`, UNIQUE, ON DELETE CASCADE | Un template por usuario. |
+| `slot_id` | INT, NOT NULL, CHECK 0–199 | Slot AS608 donde debe cargarse al restaurar. |
+| `template_data` | TEXT, NOT NULL | Template crudo en base64 (protocolo UPLOAD AS608). |
+| `fecha_creacion` | TIMESTAMPTZ | Alta del respaldo. |
+| `fecha_actualizacion` | TIMESTAMPTZ | Última actualización (enrolamiento o reasignación). |
+
+**RLS:** habilitado sin policies — acceso solo vía `createAdminClient()` (service role) desde Express.
+
+**Sincronización con `usuarios.huella_id`:** `huella_id` indica el slot actualmente cargado en el sensor físico; `huellas` es el respaldo durable. Ambos se actualizan en enrolamiento, restauración y se limpian al vaciar sensor o quitar huella.
 
 **Migraciones adicionales vía Supabase MCP** (mismo proyecto, sin archivo local separado):
 
@@ -541,16 +559,38 @@ Se reemplaza la tabla `Documentacion_Aprobacion` para el flujo actual de la app 
 | 2026 | Storage `avatars` para foto de perfil (`/preferencias`). |
 | 2026 | Búsqueda de integrantes por DNI en `search_usuarios_for_invite`. |
 | 2026 | Columna `usuarios.huella_id` + flujo de asignación de huella (admin + ESP32 + AS608). |
+| 2026 | Tabla `huellas` + vaciar/restaurar sensor AS608 desde `/admin/esp32`. |
 
 ### 6.8 Flujo de asignación de huella (app web + ESP32)
 
 1. Admin abre **Asignar Huella** en `/admin/usuarios` para un usuario.
 2. API crea sesión en memoria (`POST /api/admin/users/:id/huella/iniciar`) con un slot libre (0–199) o reutiliza el existente.
 3. ESP32 consulta `GET /api/device/esp32/huella/pendiente` y ejecuta enrolamiento físico (Adafruit + AS608).
-4. ESP32 reporta progreso (`POST .../huella/progreso`) y resultado (`POST .../huella/resultado`).
-5. API persiste `usuarios.huella_id = slotId` al confirmar éxito.
+4. ESP32 reporta progreso (`POST .../huella/progreso`) y resultado (`POST .../huella/resultado`, opcionalmente con `templateBase64`).
+5. API persiste `usuarios.huella_id = slotId` y upsert en `huellas` al confirmar éxito con template.
 6. Admin ve el estado en tiempo real vía polling (`GET .../huella/estado`).
 
-Endpoints admin: `POST iniciar`, `GET estado`, `POST cancelar`, `DELETE huella` (elimina del sensor y limpia BD).
+Endpoints admin: `POST iniciar`, `GET estado`, `POST cancelar`, `DELETE huella` (elimina del sensor, limpia `huella_id` y borra fila en `huellas`).
 
 Endpoints dispositivo: `GET huella/pendiente`, `POST huella/progreso`, `POST huella/resultado` (header `X-Device-Token`).
+
+### 6.9 Vaciar y restaurar sensor (operaciones globales)
+
+**Vaciar sensor** (`POST /api/admin/esp32/huellas/vaciar`):
+
+1. Admin confirma en `/admin/esp32`.
+2. API crea job global `wipe` en memoria (`deviceJobState.ts`).
+3. ESP32 consulta `GET /api/device/esp32/huella/lote/pendiente` y ejecuta `emptyDatabase()`.
+4. API pone `usuarios.huella_id = NULL` para todos (los respaldos en `huellas` se conservan).
+
+**Restaurar desde la base** (`POST /api/admin/esp32/huellas/restaurar`):
+
+1. Admin confirma en `/admin/esp32`.
+2. API carga snapshot de `huellas` y crea job `restore` con cola congelada.
+3. ESP32 itera `GET .../huella/lote/siguiente` → escribe template (DOWNLOAD crudo + `storeModel`) → `POST .../progreso`.
+4. En cada ítem exitoso, API actualiza `usuarios.huella_id = slotId`.
+5. Al finalizar, ESP32 envía `POST .../huella/lote/resultado` con contadores.
+
+Estado admin: `GET /api/admin/esp32/huellas/estado` (polling cada ~1,5 s).
+
+**Nota:** usuarios enrolados antes de la tabla `huellas` no tienen respaldo hasta reasignar la huella una vez.

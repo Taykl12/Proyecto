@@ -3,6 +3,7 @@ import os from "node:os";
 import { createApp } from "./app.js";
 import { config } from "./config.js";
 import { createAdminClient } from "./lib/supabase.js";
+import { deleteTemplate } from "./lib/fingerprintTemplates.js";
 import { setDeleteTimeoutCleanup } from "./lib/fingerprintState.js";
 
 function logNetworkAddresses(port: number): void {
@@ -31,6 +32,14 @@ setDeleteTimeoutCleanup(async (userId) => {
     .update({ huella_id: null })
     .eq("id_usuario", userId);
   if (error) throw new Error(error.message);
+  try {
+    await deleteTemplate(userId);
+  } catch (templateError) {
+    console.warn(
+      `[fingerprint] No se pudo borrar template tras timeout delete (user=${userId}):`,
+      templateError instanceof Error ? templateError.message : templateError
+    );
+  }
   console.warn(
     `[fingerprint] huella_id limpiado en BD tras timeout delete (user=${userId})`
   );

@@ -35,6 +35,16 @@ Se añadió una aplicación **React + TypeScript + Vite** con **CSS vanilla** (s
 - **Estado de sesión en memoria** (`fingerprintState.ts`); un solo enrolamiento activo a la vez.
 - **Firmware:** `esp32/src/main.cpp` — heartbeat + AS608 (UART GPIO20/21) con Adafruit Fingerprint Library + ArduinoJson.
 
+### Respaldo y restauración de huellas (tabla `huellas` + vaciar/restaurar sensor) (julio 2026)
+
+- **BD:** migración `018_huellas_table.sql` — tabla `huellas` (UUID, `id_usuario`, `slot_id`, `template_data` base64) con RLS sin policies (solo service role).
+- **Admin:** sección **Plantillas de huellas guardadas** en `/admin/esp32` — botones **Vaciar sensor** y **Restaurar huellas desde la base** con progreso por polling.
+- **API admin:** `POST /api/admin/esp32/huellas/vaciar`, `POST .../restaurar`, `GET .../estado`.
+- **API dispositivo:** `GET /api/device/esp32/huella/lote/pendiente`, `GET .../siguiente`, `POST .../progreso`, `POST .../resultado`.
+- **Estado de jobs globales** en memoria (`deviceJobState.ts`); excluyente con sesiones de enrolamiento individual.
+- **Enrolamiento:** `POST .../huella/resultado` acepta `templateBase64` opcional; persiste respaldo en `huellas`.
+- **Firmware:** protocolo AS608 crudo (UPLOAD/DOWNLOAD) + base64 inline; `checkPendingDeviceJob()` para wipe (`emptyDatabase`) y restore masivo.
+
 ---
 
 ## Stack y dependencias nuevas

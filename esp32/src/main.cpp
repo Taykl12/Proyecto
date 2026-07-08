@@ -28,6 +28,20 @@ const char* BUTTON_PATH = "/api/device/esp32/button";
 const char* FINGER_PENDING_PATH = "/api/device/esp32/huella/pendiente";
 const char* FINGER_PROGRESS_PATH = "/api/device/esp32/huella/progreso";
 const char* FINGER_RESULT_PATH = "/api/device/esp32/huella/resultado";
+const char* DEVICE_JOB_PENDING_PATH = "/api/device/esp32/huella/lote/pendiente";
+const char* DEVICE_JOB_NEXT_PATH = "/api/device/esp32/huella/lote/siguiente";
+const char* DEVICE_JOB_PROGRESS_PATH = "/api/device/esp32/huella/lote/progreso";
+const char* DEVICE_JOB_RESULT_PATH = "/api/device/esp32/huella/lote/resultado";
+
+const uint16_t AS608_STARTCODE = 0xEF01;
+const uint8_t AS608_COMMANDPACKET = 0x01;
+const uint8_t AS608_DATAPACKET = 0x02;
+const uint8_t AS608_ACKPACKET = 0x07;
+const uint8_t AS608_ENDDATAPACKET = 0x08;
+const uint8_t AS608_CMD_UPLOAD = 0x08;
+const uint8_t AS608_CMD_DOWNLOAD = 0x09;
+const uint16_t TEMPLATE_MAX_LEN = 1024;
+const size_t TEMPLATE_B64_MAX_LEN = 1400;
 
 const int BOOT_BUTTON_PIN = 9;
 const int LED_PIN = 8;
@@ -66,6 +80,7 @@ unsigned long lastDebounceMs = 0;
 unsigned long httpAvailableAtMs = 0;
 unsigned long lastWifiAttemptMs = 0;
 unsigned long lastFingerprintPollMs = 0;
+unsigned long lastDeviceJobPollMs = 0;
 int lastButtonReading = HIGH;
 int consecutiveHttpFails = 0;
 bool httpBusy = false;
@@ -449,13 +464,17 @@ bool postFingerprintResult(
   const String& sessionId,
   bool success,
   int slotId,
-  const char* errorMessage
+  const char* errorMessage,
+  const char* templateBase64 = nullptr
 ) {
   JsonDocument doc;
   doc["sessionId"] = sessionId;
   doc["success"] = success;
   if (success) {
     doc["slotId"] = slotId;
+    if (templateBase64 != nullptr && templateBase64[0] != '\0') {
+      doc["templateBase64"] = templateBase64;
+    }
   } else if (errorMessage != nullptr) {
     doc["error"] = errorMessage;
   }
@@ -492,6 +511,289 @@ bool waitForNoFinger(unsigned long timeoutMs) {
     delay(50);
   }
   return false;
+}
+
+void flushFingerSerial() {
+  fingerSerial.flush();
+  while (fingerSerial.available() > 0) {
+    (void)fingerSerial.read();
+  }
+}
+
+bool sendRawPacket(uint8_t type, const uint8_t* payload, uint16_t len) {
+  const uint16_t wireLength = len + 2;
+  uint16_t sum = (wireLength >> 8) + (wireLength & 0xFF) + type;
+
+  fingerSerial.write((uint8_t)(AS608_STARTCODE >> 8));
+  fingerSerial.write((uint8_t)(AS608_STARTCODE & 0xFF));
+  fingerSerial.write(0xFF);
+  fingerSerial.write(0xFF);
+  fingerSerial.write(0xFF);
+  fingerSerial.write(0xFF);
+  fingerSerial.write(type);
+  fingerSerial.write((uint8_t)(wireLength >> 8));
+  fingerSerial.write((uint8_t)(wireLength & 0xFF));
+
+  for (uint16_t i = 0; i < len; i++) {
+    fingerSerial.write(payload[i]);
+    sum += payload[i];
+  }
+
+  fingerSerial.write((uint8_t)(sum >> 8));
+  fingerSerial.write((uint8_t)(sum & 0xFF));
+  fingerSerial.flush();
+  return true;
+}
+
+bool readRawPacket(
+  uint8_t& outType,
+  uint8_t* outBuf,
+  uint16_t maxLen,
+  uint16_t& outLen,
+  unsigned long timeoutMs
+) {
+  uint16_t idx = 0;
+  uint16_t wireLength = 0;
+  const unsigned long startedAt = millis();
+
+  while (millis() - startedAt < timeoutMs) {
+    if (!fingerSerial.available()) {
+      delay(1);
+      continue;
+    }
+
+    const uint8_t byte = (uint8_t)fingerSerial.read();
+
+    if (idx == 0 && byte != (AS608_STARTCODE >> 8)) {
+      continue;
+    }
+    if (idx == 1 && byte != (AS608_STARTCODE & 0xFF)) {
+      idx = byte == (AS608_STARTCODE >> 8) ? 1 : 0;
+      continue;
+    }
+
+    if (idx == 6) {
+      outType = byte;
+    } else if (idx == 7) {
+      wireLength = (uint16_t)byte << 8;
+    } else if (idx == 8) {
+      wireLength |= byte;
+      if (wireLength < 2) {
+        return false;
+      }
+    } else if (idx >= 9) {
+      const uint16_t payloadIndex = idx - 9;
+      const uint16_t payloadLen = wireLength - 2;
+      if (payloadIndex < payloadLen) {
+        if (payloadIndex >= maxLen) {
+          return false;
+        }
+        outBuf[payloadIndex] = byte;
+      }
+      if (payloadIndex == wireLength - 1) {
+        outLen = payloadLen;
+        return true;
+      }
+    }
+
+    idx++;
+  }
+
+  return false;
+}
+
+bool readAckConfirm(unsigned long timeoutMs) {
+  uint8_t type = 0;
+  uint8_t buf[16];
+  uint16_t len = 0;
+
+  if (!readRawPacket(type, buf, sizeof(buf), len, timeoutMs)) {
+    return false;
+  }
+
+  if (type != AS608_ACKPACKET || len < 1) {
+    return false;
+  }
+
+  return buf[0] == FINGERPRINT_OK;
+}
+
+bool uploadCharBuffer(
+  uint8_t charBufferId,
+  uint8_t* outBuf,
+  uint16_t maxLen,
+  uint16_t& outLen
+) {
+  flushFingerSerial();
+
+  const uint8_t uploadPayload[] = { AS608_CMD_UPLOAD, charBufferId };
+  if (!sendRawPacket(AS608_COMMANDPACKET, uploadPayload, sizeof(uploadPayload))) {
+    Serial.println("UPLOAD: fallo al enviar comando");
+    return false;
+  }
+
+  if (!readAckConfirm(3000)) {
+    Serial.println("UPLOAD: ACK inicial inválido");
+    return false;
+  }
+
+  outLen = 0;
+  while (true) {
+    uint8_t type = 0;
+    uint8_t chunk[140];
+    uint16_t chunkLen = 0;
+
+    if (!readRawPacket(type, chunk, sizeof(chunk), chunkLen, 8000)) {
+      Serial.println("UPLOAD: timeout leyendo paquete de datos");
+      return false;
+    }
+
+    if (type == AS608_ACKPACKET) {
+      if (chunkLen >= 1 && chunk[0] != FINGERPRINT_OK) {
+        Serial.printf("UPLOAD: ACK de error 0x%02X\n", chunk[0]);
+        return false;
+      }
+      continue;
+    }
+
+    if (type != AS608_DATAPACKET && type != AS608_ENDDATAPACKET) {
+      Serial.printf("UPLOAD: tipo de paquete inesperado 0x%02X\n", type);
+      return false;
+    }
+
+    if (outLen + chunkLen > maxLen) {
+      Serial.printf("UPLOAD: template excede buffer (%u + %u > %u)\n", outLen, chunkLen, maxLen);
+      return false;
+    }
+
+    memcpy(outBuf + outLen, chunk, chunkLen);
+    outLen += chunkLen;
+
+    if (type == AS608_ENDDATAPACKET) {
+      return outLen > 0;
+    }
+  }
+}
+
+bool captureTemplateFromSlot(uint16_t slotId, uint8_t* outBuf, uint16_t maxLen, uint16_t& outLen) {
+  if (finger.loadModel(slotId) != FINGERPRINT_OK) {
+    Serial.printf("UPLOAD: loadModel(%u) falló\n", slotId);
+    return false;
+  }
+
+  // loadModel() de Adafruit carga en el char buffer 0x02, no en 0x01.
+  return uploadCharBuffer(0x02, outBuf, maxLen, outLen);
+}
+
+bool writeTemplate(uint16_t slotId, const uint8_t* data, uint16_t len) {
+  flushFingerSerial();
+
+  const uint8_t downloadPayload[] = { AS608_CMD_DOWNLOAD, 0x01 };
+  if (!sendRawPacket(AS608_COMMANDPACKET, downloadPayload, sizeof(downloadPayload))) {
+    return false;
+  }
+
+  if (!readAckConfirm(3000)) {
+    return false;
+  }
+
+  const uint16_t chunkSize = finger.packet_len > 0 ? finger.packet_len : 128;
+  uint16_t offset = 0;
+
+  while (offset < len) {
+    const uint16_t remaining = len - offset;
+    const uint16_t currentLen = remaining > chunkSize ? chunkSize : remaining;
+    const bool isLast = offset + currentLen >= len;
+    const uint8_t packetType = isLast ? AS608_ENDDATAPACKET : AS608_DATAPACKET;
+
+    if (!sendRawPacket(packetType, data + offset, currentLen)) {
+      return false;
+    }
+
+    if (!readAckConfirm(5000)) {
+      return false;
+    }
+
+    offset += currentLen;
+  }
+
+  return finger.storeModel(slotId) == FINGERPRINT_OK;
+}
+
+size_t base64EncodedLength(size_t inputLen) {
+  return 4 * ((inputLen + 2) / 3);
+}
+
+size_t base64Encode(const uint8_t* input, size_t inputLen, char* output, size_t outputMax) {
+  static const char* table =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  size_t outIdx = 0;
+
+  for (size_t i = 0; i < inputLen; i += 3) {
+    const uint32_t octetA = input[i];
+    const uint32_t octetB = i + 1 < inputLen ? input[i + 1] : 0;
+    const uint32_t octetC = i + 2 < inputLen ? input[i + 2] : 0;
+    const uint32_t triple = (octetA << 16) | (octetB << 8) | octetC;
+
+    if (outIdx + 4 >= outputMax) {
+      return 0;
+    }
+
+    output[outIdx++] = table[(triple >> 18) & 0x3F];
+    output[outIdx++] = table[(triple >> 12) & 0x3F];
+    output[outIdx++] = i + 1 < inputLen ? table[(triple >> 6) & 0x3F] : '=';
+    output[outIdx++] = i + 2 < inputLen ? table[triple & 0x3F] : '=';
+  }
+
+  if (outIdx < outputMax) {
+    output[outIdx] = '\0';
+  }
+
+  return outIdx;
+}
+
+int base64Value(char c) {
+  if (c >= 'A' && c <= 'Z') return c - 'A';
+  if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+  if (c >= '0' && c <= '9') return c - '0' + 52;
+  if (c == '+') return 62;
+  if (c == '/') return 63;
+  return -1;
+}
+
+size_t base64Decode(const char* input, uint8_t* output, size_t outputMax) {
+  size_t inLen = strlen(input);
+  size_t outIdx = 0;
+
+  for (size_t i = 0; i < inLen; i += 4) {
+    const int v0 = base64Value(input[i]);
+    const int v1 = i + 1 < inLen ? base64Value(input[i + 1]) : -1;
+    const int v2 = i + 2 < inLen && input[i + 2] != '=' ? base64Value(input[i + 2]) : -1;
+    const int v3 = i + 3 < inLen && input[i + 3] != '=' ? base64Value(input[i + 3]) : -1;
+
+    if (v0 < 0 || v1 < 0) {
+      return 0;
+    }
+
+    const uint32_t triple = ((uint32_t)v0 << 18) | ((uint32_t)v1 << 12) |
+                            ((v2 >= 0 ? (uint32_t)v2 : 0) << 6) |
+                            (v3 >= 0 ? (uint32_t)v3 : 0);
+
+    if (outIdx >= outputMax) return 0;
+    output[outIdx++] = (triple >> 16) & 0xFF;
+
+    if (v2 >= 0) {
+      if (outIdx >= outputMax) return 0;
+      output[outIdx++] = (triple >> 8) & 0xFF;
+    }
+
+    if (v3 >= 0) {
+      if (outIdx >= outputMax) return 0;
+      output[outIdx++] = triple & 0xFF;
+    }
+  }
+
+  return outIdx;
 }
 
 void runFingerprintDelete(const String& sessionId, int slotId) {
@@ -570,6 +872,11 @@ void runFingerprintEnroll(const String& sessionId, int slotId) {
     return;
   }
 
+  uint8_t templateBuf[TEMPLATE_MAX_LEN];
+  uint16_t templateLen = 0;
+  char templateBase64[TEMPLATE_B64_MAX_LEN];
+  templateBase64[0] = '\0';
+
   p = finger.storeModel(slotId);
   if (p != FINGERPRINT_OK) {
     postFingerprintResult(sessionId, false, slotId, "No se pudo guardar la huella en el sensor");
@@ -578,7 +885,28 @@ void runFingerprintEnroll(const String& sessionId, int slotId) {
     return;
   }
 
-  postFingerprintResult(sessionId, true, slotId, nullptr);
+  // Respaldo opcional: leer template desde flash (loadModel → buffer 0x02 → UPLOAD).
+  if (captureTemplateFromSlot((uint16_t)slotId, templateBuf, TEMPLATE_MAX_LEN, templateLen)) {
+    const size_t encodedLen = base64EncodedLength(templateLen);
+    if (encodedLen > 0 && encodedLen < TEMPLATE_B64_MAX_LEN) {
+      if (base64Encode(templateBuf, templateLen, templateBase64, TEMPLATE_B64_MAX_LEN) > 0) {
+        Serial.printf("Template capturado (%u bytes, b64 %u)\n", templateLen, encodedLen);
+      } else {
+        templateBase64[0] = '\0';
+        Serial.println("No se pudo codificar template en base64");
+      }
+    }
+  } else {
+    Serial.println("No se pudo capturar template de respaldo (enroll OK sin backup)");
+  }
+
+  postFingerprintResult(
+    sessionId,
+    true,
+    slotId,
+    nullptr,
+    templateBase64[0] != '\0' ? templateBase64 : nullptr
+  );
   blinkLed(3, 120);
   Serial.printf("Huella guardada en slot %d\n", slotId);
 
@@ -642,13 +970,193 @@ void checkPendingFingerprint(unsigned long now) {
   runFingerprintJob(sessionId, slotId, mode);
 }
 
+bool postDeviceJobProgress(
+  const String& sessionId,
+  int index,
+  bool success,
+  int slotId,
+  const String& userId
+) {
+  JsonDocument doc;
+  doc["sessionId"] = sessionId;
+  doc["index"] = index;
+  doc["success"] = success;
+  doc["slotId"] = slotId;
+  doc["userId"] = userId;
+  String body;
+  serializeJson(doc, body);
+  return httpPostJson(DEVICE_JOB_PROGRESS_PATH, body, false);
+}
+
+bool postDeviceJobResult(
+  const String& sessionId,
+  bool success,
+  const char* errorMessage
+) {
+  JsonDocument doc;
+  doc["sessionId"] = sessionId;
+  doc["success"] = success;
+  if (!success && errorMessage != nullptr) {
+    doc["error"] = errorMessage;
+  }
+  String body;
+  serializeJson(doc, body);
+  return httpPostJson(DEVICE_JOB_RESULT_PATH, body, false);
+}
+
+void runDeviceWipeJob(const String& sessionId) {
+  closeHeartbeatSession();
+  fingerprintJobActive = true;
+  httpQuietUntil = millis() + 120000;
+
+  const uint8_t result = finger.emptyDatabase();
+  if (result == FINGERPRINT_OK) {
+    postDeviceJobResult(sessionId, true, nullptr);
+    blinkLed(3, 120);
+    Serial.println("Sensor vaciado correctamente");
+  } else {
+    postDeviceJobResult(sessionId, false, "No se pudo vaciar la memoria del sensor");
+    Serial.printf("Error al vaciar sensor: %d\n", result);
+  }
+
+  fingerprintJobActive = false;
+  httpQuietUntil = millis() + BUTTON_HTTP_QUIET_MS;
+  lastDeviceJobPollMs = millis();
+}
+
+void runDeviceRestoreJob(const String& sessionId) {
+  closeHeartbeatSession();
+  fingerprintJobActive = true;
+  httpQuietUntil = millis() + 600000;
+
+  int restored = 0;
+  int failed = 0;
+
+  while (true) {
+    int code = -1;
+    const String path =
+      String(DEVICE_JOB_NEXT_PATH) + "?sessionId=" + sessionId;
+    const String body = httpGetBody(path.c_str(), code);
+
+    if (code < 200 || code >= 300) {
+      postDeviceJobResult(sessionId, false, "Error al obtener siguiente template");
+      break;
+    }
+
+    JsonDocument doc;
+    if (deserializeJson(doc, body)) {
+      postDeviceJobResult(sessionId, false, "Respuesta inválida del servidor");
+      break;
+    }
+
+    if (doc["done"] | false) {
+      postDeviceJobResult(sessionId, true, nullptr);
+      blinkLed(3, 120);
+      Serial.printf("Restauración completa: %d ok, %d fallos\n", restored, failed);
+      break;
+    }
+
+    const int index = doc["index"] | -1;
+    const int slotId = doc["slotId"] | -1;
+    const String userId = doc["userId"] | "";
+    const String templateBase64 = doc["templateBase64"] | "";
+
+    if (index < 0 || slotId < 0 || userId.length() == 0 || templateBase64.length() == 0) {
+      postDeviceJobResult(sessionId, false, "Template inválido en la cola");
+      break;
+    }
+
+    uint8_t templateBuf[TEMPLATE_MAX_LEN];
+    const size_t decodedLen =
+      base64Decode(templateBase64.c_str(), templateBuf, TEMPLATE_MAX_LEN);
+
+    bool itemOk = false;
+    if (decodedLen > 0) {
+      itemOk = writeTemplate((uint16_t)slotId, templateBuf, (uint16_t)decodedLen);
+    }
+
+    if (itemOk) {
+      restored++;
+    } else {
+      failed++;
+    }
+
+    postDeviceJobProgress(sessionId, index, itemOk, slotId, userId);
+    Serial.printf(
+      "Restaurar slot %d (%s): %s\n",
+      slotId,
+      userId.c_str(),
+      itemOk ? "OK" : "FALLÓ"
+    );
+  }
+
+  fingerprintJobActive = false;
+  httpQuietUntil = millis() + BUTTON_HTTP_QUIET_MS;
+  lastDeviceJobPollMs = millis();
+}
+
+void runDeviceJob(const String& sessionId, const String& jobType) {
+  if (!fingerprintReady) {
+    postDeviceJobResult(sessionId, false, "Sensor de huella no disponible");
+    return;
+  }
+
+  if (jobType == "wipe") {
+    runDeviceWipeJob(sessionId);
+  } else {
+    runDeviceRestoreJob(sessionId);
+  }
+}
+
+void checkPendingDeviceJob(unsigned long now) {
+  if (
+    fingerprintJobActive ||
+    pendingButtonPost ||
+    !canSendHttp(now) ||
+    now < httpQuietUntil ||
+    now - lastDeviceJobPollMs < FINGERPRINT_POLL_INTERVAL_MS
+  ) {
+    return;
+  }
+
+  lastDeviceJobPollMs = now;
+
+  int code = -1;
+  const String body = httpGetBody(DEVICE_JOB_PENDING_PATH, code);
+  if (code < 200 || code >= 300) {
+    return;
+  }
+
+  JsonDocument doc;
+  if (deserializeJson(doc, body)) {
+    Serial.println("JSON inválido en huella/lote/pendiente");
+    return;
+  }
+
+  if (!doc["pending"] || !doc["pending"].as<bool>()) {
+    return;
+  }
+
+  const String sessionId = doc["sessionId"].as<String>();
+  const String jobType = doc["jobType"] | "wipe";
+
+  if (sessionId.length() == 0) {
+    return;
+  }
+
+  Serial.printf("Trabajo global de huella: type=%s\n", jobType.c_str());
+  runDeviceJob(sessionId, jobType);
+}
+
 void setupFingerprintSensor() {
   fingerSerial.begin(57600, SERIAL_8N1, FINGER_RX_PIN, FINGER_TX_PIN);
   finger.begin(57600);
 
   if (finger.verifyPassword()) {
     fingerprintReady = true;
+    finger.getParameters();
     Serial.println("Sensor AS608 detectado");
+    Serial.printf("Capacidad: %u, packet_len: %u\n", finger.capacity, finger.packet_len);
   } else {
     fingerprintReady = false;
     Serial.println("Sensor AS608 no detectado (continuará sin huella)");
@@ -702,6 +1210,7 @@ void loop() {
   lastButtonReading = reading;
 
   processPendingButton(now);
+  checkPendingDeviceJob(now);
   checkPendingFingerprint(now);
 
   const bool heartbeatAllowed =

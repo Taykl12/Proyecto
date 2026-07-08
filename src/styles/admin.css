@@ -862,6 +862,25 @@
   color: var(--color-ink-muted);
 }
 
+.esp32-templates {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.esp32-templates__status {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-ink);
+}
+
+.esp32-templates__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
 .fingerprint-modal {
   display: flex;
   flex-direction: column;

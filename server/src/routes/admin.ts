@@ -7,6 +7,13 @@ import {
   validateHorario,
   validateSuperiorSpecialty,
 } from "../lib/adminAcademic.js";
+import {
+  getDeviceJobStatus,
+  startRestoreJob,
+  startWipeJob,
+} from "../lib/deviceJobState.js";
+import { listAllTemplates } from "../lib/fingerprintTemplates.js";
+import { hasActiveUserFingerprintSession } from "../lib/fingerprintState.js";
 import { getEsp32Status, resetPressCount } from "../lib/esp32State.js";
 import { requireAdmin } from "../middleware/admin.js";
 import { requireAuth, type AuthedRequest } from "../middleware/auth.js";
@@ -954,6 +961,52 @@ router.get("/esp32/status", (_req, res) => {
 router.post("/esp32/reset", (_req, res) => {
   resetPressCount();
   res.json(getEsp32Status());
+});
+
+router.get("/esp32/huellas/estado", (_req, res) => {
+  res.json(getDeviceJobStatus());
+});
+
+router.post("/esp32/huellas/vaciar", (_req, res) => {
+  try {
+    if (hasActiveUserFingerprintSession()) {
+      res.status(409).json({
+        error:
+          "Hay una asignación de huella en curso. Cancelala o esperá a que termine.",
+      });
+      return;
+    }
+
+    const session = startWipeJob();
+    res.status(201).json({
+      sessionId: session.sessionId,
+      jobType: session.jobType,
+    });
+  } catch (e) {
+    res.status(statusFromError(e)).json({ error: messageFromError(e) });
+  }
+});
+
+router.post("/esp32/huellas/restaurar", async (_req, res) => {
+  try {
+    if (hasActiveUserFingerprintSession()) {
+      res.status(409).json({
+        error:
+          "Hay una asignación de huella en curso. Cancelala o esperá a que termine.",
+      });
+      return;
+    }
+
+    const queue = await listAllTemplates();
+    const session = startRestoreJob(queue);
+    res.status(201).json({
+      sessionId: session.sessionId,
+      jobType: session.jobType,
+      total: queue.length,
+    });
+  } catch (e) {
+    res.status(statusFromError(e)).json({ error: messageFromError(e) });
+  }
 });
 
 export default router;

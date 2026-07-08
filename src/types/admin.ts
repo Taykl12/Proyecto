@@ -66,6 +66,16 @@ export interface Esp32Status {
   lastSeenAt: string | null;
 }
 
+export interface DeviceJobStatus {
+  active: boolean;
+  jobType: "wipe" | "restore" | null;
+  total: number | null;
+  index: number | null;
+  succeeded: number | null;
+  failed: number | null;
+  errorMessage: string | null;
+}
+
 export interface ProjectLocks {
   scope: boolean;
   documentation: boolean;
