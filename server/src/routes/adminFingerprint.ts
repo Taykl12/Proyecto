@@ -6,6 +6,7 @@ import {
   startSession,
 } from "../lib/fingerprintState.js";
 import { getNextFreeSlot } from "../lib/fingerprintSlots.js";
+import { userIsAlumno } from "../lib/roles.js";
 import { requireAdmin } from "../middleware/admin.js";
 import { requireAuth } from "../middleware/auth.js";
 
@@ -39,6 +40,18 @@ async function assertUserExists(userId: string): Promise<void> {
   }
 }
 
+async function assertUserCanHaveHuella(userId: string): Promise<void> {
+  await assertUserExists(userId);
+  const supabase = createAdminClient();
+  const isAlumno = await userIsAlumno(supabase, userId);
+  if (!isAlumno) {
+    throw Object.assign(
+      new Error("Solo los usuarios con rol Alumno pueden tener huella asignada"),
+      { status: 400 }
+    );
+  }
+}
+
 function statusFromError(e: unknown): number {
   return typeof e === "object" && e !== null && "status" in e
     ? Number((e as { status: unknown }).status) || 500
@@ -52,7 +65,7 @@ function messageFromError(e: unknown): string {
 router.post("/:id/huella/iniciar", async (req, res) => {
   try {
     const userId = req.params.id;
-    await assertUserExists(userId);
+    await assertUserCanHaveHuella(userId);
 
     const supabase = createAdminClient();
     const existing = await getUserHuellaId(userId);

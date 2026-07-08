@@ -44,6 +44,11 @@ function userToForm(user: AdminUser): UserFormState {
   };
 }
 
+function isAlumnoUser(user: { roleId: number | null; roleLabel: string }): boolean {
+  if (user.roleId === 3) return true;
+  return user.roleLabel.trim().toLowerCase() === "alumno";
+}
+
 function filterUsers(users: AdminUser[], query: string): AdminUser[] {
   const needle = query.trim().toLowerCase();
   if (!needle) return users;
@@ -410,7 +415,12 @@ export default function AdminUsersPage() {
                         type="button"
                         className="projects-table__action"
                         onClick={() => openFingerprint(item)}
-                        disabled={removingFingerprint === item.id}
+                        disabled={removingFingerprint === item.id || !isAlumnoUser(item)}
+                        title={
+                          isAlumnoUser(item)
+                            ? undefined
+                            : "Solo usuarios con rol Alumno pueden tener huella"
+                        }
                       >
                         {item.huellaId !== null ? "Reasignar Huella" : "Asignar Huella"}
                       </button>

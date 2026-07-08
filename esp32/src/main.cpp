@@ -90,16 +90,24 @@ void closeHeartbeatSession() {
   heartbeatSessionReady = false;
 }
 
-void onWiFiEvent(WiFiEvent_t event) {
+void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
   switch (event) {
-    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED: {
       closeHeartbeatSession();
       wifiReady = false;
       wifiConnectStarted = false;
       lastWifiAttemptMs = millis();
       heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS;
-      Serial.println("WiFi: desconectado");
+      const uint8_t reason = info.wifi_sta_disconnected.reason;
+      Serial.printf("WiFi: desconectado (codigo=%u", reason);
+      if (reason == 2 || reason == 15 || reason == 202 || reason == 204) {
+        Serial.print(", contraseña incorrecta o WPA incompatible");
+      } else if (reason == 201) {
+        Serial.print(", red no encontrada (SSID/banda 2.4 GHz)");
+      }
+      Serial.println(")");
       break;
+    }
     case ARDUINO_EVENT_WIFI_STA_GOT_IP:
       wifiStableAtMs = millis() + WIFI_STABILIZE_MS;
       heartbeatIntervalMs = HEARTBEAT_INTERVAL_MS;
@@ -165,6 +173,9 @@ void startWiFiConnect() {
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
   WiFi.setAutoReconnect(true);
+  // Los ESP32-C3 (sobre todo SuperMini) suelen fallar con AUTH_EXPIRE (código 2)
+  // contra hotspots de celular por exceso de potencia de transmisión.
+  WiFi.setTxPower(WIFI_POWER_8_5dBm);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
   wifiConnectStarted = true;
@@ -201,7 +212,7 @@ bool updateWiFiConnection(unsigned long now) {
     Serial.println("Timeout WiFi.");
     printWifiError();
     scanNearbyNetworks();
-    lastWifiAttemptMs = now;
+    lastWifiAttemptMs = now - WIFI_RETRY_INTERVAL_MS;
     return false;
   }
 
@@ -426,7 +437,7 @@ void processPendingButton(unsigned long now) {
 }
 
 bool postFingerprintProgress(const String& sessionId, const char* step) {
-  StaticJsonDocument<192> doc;
+  JsonDocument doc;
   doc["sessionId"] = sessionId;
   doc["step"] = step;
   String body;
@@ -440,7 +451,7 @@ bool postFingerprintResult(
   int slotId,
   const char* errorMessage
 ) {
-  StaticJsonDocument<256> doc;
+  JsonDocument doc;
   doc["sessionId"] = sessionId;
   doc["success"] = success;
   if (success) {
@@ -608,7 +619,7 @@ void checkPendingFingerprint(unsigned long now) {
     return;
   }
 
-  StaticJsonDocument<384> doc;
+  JsonDocument doc;
   const DeserializationError err = deserializeJson(doc, body);
   if (err) {
     Serial.println("JSON inválido en huella/pendiente");
@@ -646,7 +657,7 @@ void setupFingerprintSensor() {
 
 void setup() {
   Serial.begin(115200);
-  delay(1000);
+  delay(5000);
   Serial.println();
   Serial.println("ESP32-C3 Classify iniciando...");
 
