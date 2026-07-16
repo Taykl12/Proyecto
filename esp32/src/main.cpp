@@ -209,6 +209,7 @@ bool updateWiFiConnection(unsigned long now) {
       Serial.print("Conectado. IP: ");
       Serial.println(WiFi.localIP());
       Serial.printf("Señal: %d dBm\n", WiFi.RSSI());
+      Serial.printf("API destino: %s\n", API_BASE_URL);
     }
     return true;
   }
@@ -444,7 +445,7 @@ void processPendingButton(unsigned long now) {
     buttonCooldownUntil = now + BUTTON_MIN_INTERVAL_MS;
     httpQuietUntil = now + BUTTON_HTTP_QUIET_MS;
     httpAvailableAtMs = now + HTTP_MIN_GAP_MS * 2;
-    blinkLed();
+    blinkLed();    
     Serial.println("Botón OK — heartbeat pausado 12 s");
   } else {
     buttonPostAtMs = now + BUTTON_RETRY_MS;
@@ -915,6 +916,67 @@ void runFingerprintEnroll(const String& sessionId, int slotId) {
   lastFingerprintPollMs = millis();
 }
 
+void runFingerprintVerify(const String& sessionId, int expectedSlotId) {
+  closeHeartbeatSession();
+  fingerprintJobActive = true;
+  httpQuietUntil = millis() + 120000;
+
+  postFingerprintProgress(sessionId, "place_finger");
+  if (!waitForFinger(FINGER_STEP_TIMEOUT_MS)) {
+    postFingerprintResult(sessionId, false, expectedSlotId, "Tiempo agotado esperando el dedo");
+    fingerprintJobActive = false;
+    httpQuietUntil = millis() + BUTTON_HTTP_QUIET_MS;
+    return;
+  }
+
+  postFingerprintProgress(sessionId, "processing");
+  uint8_t p = finger.image2Tz(1);
+  if (p != FINGERPRINT_OK) {
+    postFingerprintResult(sessionId, false, expectedSlotId, "No se pudo leer la huella");
+    fingerprintJobActive = false;
+    httpQuietUntil = millis() + BUTTON_HTTP_QUIET_MS;
+    return;
+  }
+
+  p = finger.fingerSearch();
+  if (p != FINGERPRINT_OK) {
+    postFingerprintResult(sessionId, false, expectedSlotId, "Huella no reconocida");
+    fingerprintJobActive = false;
+    httpQuietUntil = millis() + BUTTON_HTTP_QUIET_MS;
+    return;
+  }
+
+  if ((int)finger.fingerID != expectedSlotId) {
+    Serial.printf(
+      "Validación fallida: esperado slot %d, sensor devolvió %d (conf=%d)\n",
+      expectedSlotId,
+      finger.fingerID,
+      finger.confidence
+    );
+    postFingerprintResult(
+      sessionId,
+      false,
+      expectedSlotId,
+      "La huella no corresponde a este usuario"
+    );
+    fingerprintJobActive = false;
+    httpQuietUntil = millis() + BUTTON_HTTP_QUIET_MS;
+    return;
+  }
+
+  Serial.printf(
+    "Huella validada: slot %d (conf=%d)\n",
+    finger.fingerID,
+    finger.confidence
+  );
+  postFingerprintResult(sessionId, true, expectedSlotId, nullptr);
+  blinkLed(3, 120);
+
+  fingerprintJobActive = false;
+  httpQuietUntil = millis() + BUTTON_HTTP_QUIET_MS;
+  lastFingerprintPollMs = millis();
+}
+
 void runFingerprintJob(const String& sessionId, int slotId, const String& mode) {
   if (!fingerprintReady) {
     postFingerprintResult(sessionId, false, slotId, "Sensor de huella no disponible");
@@ -923,6 +985,8 @@ void runFingerprintJob(const String& sessionId, int slotId, const String& mode) 
 
   if (mode == "delete") {
     runFingerprintDelete(sessionId, slotId);
+  } else if (mode == "verify") {
+    runFingerprintVerify(sessionId, slotId);
   } else {
     runFingerprintEnroll(sessionId, slotId);
   }

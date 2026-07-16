@@ -10,7 +10,7 @@ export type FingerprintStep =
   | "success"
   | "error";
 
-export type FingerprintMode = "enroll" | "delete";
+export type FingerprintMode = "enroll" | "delete" | "verify";
 
 export interface FingerprintSession {
   sessionId: string;

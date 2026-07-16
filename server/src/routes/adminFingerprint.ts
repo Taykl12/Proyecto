@@ -125,4 +125,28 @@ router.delete("/:id/huella", async (req, res) => {
   }
 });
 
+router.post("/:id/huella/validar", async (req, res) => {
+  try {
+    const userId = req.params.id;
+    await assertUserExists(userId);
+
+    const existing = await getUserHuellaId(userId);
+    if (existing === null) {
+      throw Object.assign(
+        new Error("El usuario no tiene una huella asignada"),
+        { status: 400 }
+      );
+    }
+
+    const session = startSession(userId, existing, "verify");
+    res.status(201).json({
+      sessionId: session.sessionId,
+      slotId: session.slotId,
+      step: session.step,
+    });
+  } catch (e) {
+    res.status(statusFromError(e)).json({ error: messageFromError(e) });
+  }
+});
+
 export default router;

@@ -6,14 +6,38 @@ import type { AdminUser, FingerprintStatus, FingerprintStep } from "../../types/
 
 const POLL_INTERVAL_MS = 1500;
 
+export type FingerprintModalMode = "enroll" | "verify";
+
 interface FingerprintEnrollModalProps {
   user: AdminUser | null;
   open: boolean;
+  mode?: FingerprintModalMode;
   onClose: () => void;
   onSuccess: () => void;
 }
 
-function stepMessage(step: FingerprintStep | null): string {
+function stepMessage(
+  step: FingerprintStep | null,
+  mode: FingerprintModalMode
+): string {
+  if (mode === "verify") {
+    switch (step) {
+      case "requested":
+        return "Esperando a que el ESP32 tome la solicitud…";
+      case "claimed":
+      case "place_finger":
+        return "Coloque el dedo en el sensor para validar";
+      case "processing":
+        return "Comparando huella…";
+      case "success":
+        return "¡Huella Validada!";
+      case "error":
+        return "La huella no pudo validarse";
+      default:
+        return "Iniciando validación…";
+    }
+  }
+
   switch (step) {
     case "requested":
       return "Esperando a que el ESP32 tome la solicitud…";
@@ -42,6 +66,7 @@ function fullName(user: AdminUser): string {
 export function FingerprintEnrollModal({
   user,
   open,
+  mode = "enroll",
   onClose,
   onSuccess,
 }: FingerprintEnrollModalProps) {
@@ -49,26 +74,40 @@ export function FingerprintEnrollModal({
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
 
-  const startEnrollment = useCallback(async (targetUser: AdminUser) => {
-    setStarting(true);
-    setError(null);
-    try {
-      await apiFetch<{ sessionId: string; slotId: number; step: FingerprintStep }>(
-        `/api/admin/users/${targetUser.id}/huella/iniciar`,
-        { method: "POST" }
-      );
-      const initial = await apiFetchWithRetry<FingerprintStatus>(
-        `/api/admin/users/${targetUser.id}/huella/estado`
-      );
-      setStatus(initial);
-    } catch (e) {
-      setError(e instanceof ApiError ? e.message : "No se pudo iniciar la asignación");
-    } finally {
-      setStarting(false);
-    }
-  }, []);
+  const startSession = useCallback(
+    async (targetUser: AdminUser) => {
+      setStarting(true);
+      setError(null);
+      try {
+        const path =
+          mode === "verify"
+            ? `/api/admin/users/${targetUser.id}/huella/validar`
+            : `/api/admin/users/${targetUser.id}/huella/iniciar`;
 
-  const cancelEnrollment = useCallback(async () => {
+        await apiFetch<{ sessionId: string; slotId: number; step: FingerprintStep }>(
+          path,
+          { method: "POST" }
+        );
+        const initial = await apiFetchWithRetry<FingerprintStatus>(
+          `/api/admin/users/${targetUser.id}/huella/estado`
+        );
+        setStatus(initial);
+      } catch (e) {
+        setError(
+          e instanceof ApiError
+            ? e.message
+            : mode === "verify"
+              ? "No se pudo iniciar la validación"
+              : "No se pudo iniciar la asignación"
+        );
+      } finally {
+        setStarting(false);
+      }
+    },
+    [mode]
+  );
+
+  const cancelSession = useCallback(async () => {
     if (!user) return;
     try {
       await apiFetch(`/api/admin/users/${user.id}/huella/cancelar`, {
@@ -80,18 +119,18 @@ export function FingerprintEnrollModal({
   }, [user]);
 
   const handleClose = useCallback(() => {
-    void cancelEnrollment();
+    void cancelSession();
     setStatus(null);
     setError(null);
     onClose();
-  }, [cancelEnrollment, onClose]);
+  }, [cancelSession, onClose]);
 
   useEffect(() => {
     if (!open || !user) return;
     setStatus(null);
     setError(null);
-    void startEnrollment(user);
-  }, [open, user, startEnrollment]);
+    void startSession(user);
+  }, [open, user, startSession]);
 
   useEffect(() => {
     if (!open || !user || starting) return;
@@ -136,7 +175,7 @@ export function FingerprintEnrollModal({
       setStatus(null);
     }, 1500);
 
-    return () => window.clearInterval(timer);
+    return () => window.clearTimeout(timer);
   }, [open, status?.step, onSuccess, onClose]);
 
   if (!open || !user) return null;
@@ -150,10 +189,17 @@ export function FingerprintEnrollModal({
     !isError &&
     (starting || step === "requested" || step === "processing" || step === "claimed");
 
+  const title =
+    mode === "verify"
+      ? "Validar huella"
+      : user.huellaId !== null
+        ? "Reasignar huella"
+        : "Asignar huella";
+
   return (
     <AdminModal
       open={open}
-      title={user.huellaId !== null ? "Reasignar huella" : "Asignar huella"}
+      title={title}
       error={isError ? displayError : null}
       onClose={handleClose}
       footer={
@@ -179,7 +225,7 @@ export function FingerprintEnrollModal({
               <button
                 type="button"
                 className="project-modal__btn project-modal__btn--primary"
-                onClick={() => void startEnrollment(user)}
+                onClick={() => void startSession(user)}
                 disabled={starting}
               >
                 Reintentar
@@ -214,27 +260,41 @@ export function FingerprintEnrollModal({
               aria-hidden
             />
           )}
-          <p>{stepMessage(step)}</p>
+          <p>{stepMessage(step, mode)}</p>
         </div>
 
-        <ol className="fingerprint-modal__steps">
-          <li className={step === "requested" || step === "claimed" ? "is-active" : ""}>
-            Conectar con el ESP32
-          </li>
-          <li
-            className={
-              step === "place_finger" || step === "place_again" ? "is-active" : ""
-            }
-          >
-            Colocar el dedo en el sensor
-          </li>
-          <li className={step === "remove_finger" ? "is-active" : ""}>
-            Retirar y volver a colocar el dedo
-          </li>
-          <li className={step === "processing" || step === "success" ? "is-active" : ""}>
-            Guardar en el sensor y vincular al usuario
-          </li>
-        </ol>
+        {mode === "verify" ? (
+          <ol className="fingerprint-modal__steps">
+            <li className={step === "requested" || step === "claimed" ? "is-active" : ""}>
+              Conectar con el ESP32
+            </li>
+            <li className={step === "place_finger" ? "is-active" : ""}>
+              Colocar el dedo en el sensor
+            </li>
+            <li className={step === "processing" || step === "success" ? "is-active" : ""}>
+              Validar coincidencia
+            </li>
+          </ol>
+        ) : (
+          <ol className="fingerprint-modal__steps">
+            <li className={step === "requested" || step === "claimed" ? "is-active" : ""}>
+              Conectar con el ESP32
+            </li>
+            <li
+              className={
+                step === "place_finger" || step === "place_again" ? "is-active" : ""
+              }
+            >
+              Colocar el dedo en el sensor
+            </li>
+            <li className={step === "remove_finger" ? "is-active" : ""}>
+              Retirar y volver a colocar el dedo
+            </li>
+            <li className={step === "processing" || step === "success" ? "is-active" : ""}>
+              Guardar en el sensor y vincular al usuario
+            </li>
+          </ol>
+        )}
       </div>
     </AdminModal>
   );

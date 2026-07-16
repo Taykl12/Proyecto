@@ -169,7 +169,7 @@ router.post("/huella/resultado", async (req, res) => {
           return;
         }
       }
-    } else {
+    } else if (session.mode === "delete") {
       const { error } = await supabase
         .from("usuarios")
         .update({ huella_id: null })
@@ -193,6 +193,7 @@ router.post("/huella/resultado", async (req, res) => {
         return;
       }
     }
+    // mode === "verify": no cambia BD; solo confirma match en el sensor
 
     completeSuccess(sessionId);
     res.json({ ok: true, slotId: session.slotId });

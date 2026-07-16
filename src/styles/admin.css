@@ -959,6 +959,11 @@
   font-weight: 600;
 }
 
+.admin-table__fingerprint--validated {
+  color: var(--color-success-text);
+  font-weight: 700;
+}
+
 .admin-table__fingerprint--empty {
   color: var(--color-ink-muted);
 }

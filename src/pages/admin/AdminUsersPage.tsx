@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { Fingerprint, Search, Users } from "lucide-react";
 import { AdminModal } from "../../components/admin/AdminModal";
-import { FingerprintEnrollModal } from "../../components/admin/FingerprintEnrollModal";
+import {
+  FingerprintEnrollModal,
+  type FingerprintModalMode,
+} from "../../components/admin/FingerprintEnrollModal";
 import { DashboardLayout } from "../../components/layout/DashboardLayout";
 import { useAuth } from "../../contexts/AuthContext";
 import { ApiError, apiFetch, apiFetchWithRetry } from "../../lib/api";
@@ -170,6 +173,8 @@ export default function AdminUsersPage() {
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
   const [form, setForm] = useState<UserFormState>(EMPTY_USER_FORM);
   const [fingerprintUser, setFingerprintUser] = useState<AdminUser | null>(null);
+  const [fingerprintMode, setFingerprintMode] = useState<FingerprintModalMode>("enroll");
+  const [validatedUserIds, setValidatedUserIds] = useState<Record<string, true>>({});
   const [removingFingerprint, setRemovingFingerprint] = useState<string | null>(null);
 
   const visibleUsers = useMemo(() => filterUsers(users, query), [users, query]);
@@ -266,12 +271,20 @@ export default function AdminUsersPage() {
     }
   }
 
-  function openFingerprint(item: AdminUser) {
+  function openFingerprint(item: AdminUser, mode: FingerprintModalMode = "enroll") {
+    setFingerprintMode(mode);
     setFingerprintUser(item);
   }
 
   function closeFingerprint() {
     setFingerprintUser(null);
+  }
+
+  function handleFingerprintSuccess() {
+    if (fingerprintMode === "verify" && fingerprintUser) {
+      setValidatedUserIds((prev) => ({ ...prev, [fingerprintUser.id]: true }));
+    }
+    void loadUsers();
   }
 
   async function pollDeleteStatus(userId: string): Promise<FingerprintStatus> {
@@ -313,6 +326,12 @@ export default function AdminUsersPage() {
           500
         );
       }
+      setValidatedUserIds((prev) => {
+        if (!prev[item.id]) return prev;
+        const next = { ...prev };
+        delete next[item.id];
+        return next;
+      });
       await loadUsers();
     } catch (e) {
       setError(e instanceof ApiError ? e.message : "No se pudo quitar la huella");
@@ -400,9 +419,17 @@ export default function AdminUsersPage() {
                     </td>
                     <td className="projects-table__cell" data-label="Huella">
                       {item.huellaId !== null ? (
-                        <span className="admin-table__fingerprint admin-table__fingerprint--assigned">
+                        <span
+                          className={`admin-table__fingerprint admin-table__fingerprint--assigned${
+                            validatedUserIds[item.id]
+                              ? " admin-table__fingerprint--validated"
+                              : ""
+                          }`}
+                        >
                           <Fingerprint size={16} aria-hidden />
-                          Slot #{item.huellaId}
+                          {validatedUserIds[item.id]
+                            ? "Huella Validada"
+                            : `Slot #${item.huellaId}`}
                         </span>
                       ) : (
                         <span className="admin-table__fingerprint admin-table__fingerprint--empty">
@@ -424,6 +451,16 @@ export default function AdminUsersPage() {
                       >
                         {item.huellaId !== null ? "Reasignar Huella" : "Asignar Huella"}
                       </button>
+                      {item.huellaId !== null ? (
+                        <button
+                          type="button"
+                          className="projects-table__action"
+                          onClick={() => openFingerprint(item, "verify")}
+                          disabled={removingFingerprint === item.id}
+                        >
+                          Validar Huella
+                        </button>
+                      ) : null}
                       {item.huellaId !== null ? (
                         <button
                           type="button"
@@ -496,8 +533,9 @@ export default function AdminUsersPage() {
       <FingerprintEnrollModal
         user={fingerprintUser}
         open={fingerprintUser !== null}
+        mode={fingerprintMode}
         onClose={closeFingerprint}
-        onSuccess={() => void loadUsers()}
+        onSuccess={handleFingerprintSuccess}
       />
     </DashboardLayout>
   );
